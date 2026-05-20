@@ -2,31 +2,31 @@
 session_start();
 require('../connection.php');
 
-if (!isset($_SESSION['admin_id'])) {
+// Check if user is logged in
+if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
 }
 
 $error = '';
 $success = '';
-$sendChangeNotification = false;
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $current_password = $_POST['old_password'];
+    $current_password = $_POST['current_password'];
     $new_password = $_POST['new_password'];
     $confirm_password = $_POST['confirm_password'];
-    $admin_id = $_SESSION['admin_id'];
+    $user_id = $_SESSION['user_id'];
 
     // Get current password from database
-    $stmt = $connection->prepare("SELECT password FROM admins WHERE id = ?");
-    $stmt->bind_param("i", $admin_id);
+    $stmt = $connection->prepare("SELECT password FROM customers WHERE id = ?");
+    $stmt->bind_param("i", $user_id);
     $stmt->execute();
     $result = $stmt->get_result();
-    $admin = $result->fetch_assoc();
+    $user = $result->fetch_assoc();
     $stmt->close();
 
     // Verify current password
-    if (!password_verify($current_password, $admin['password'])) {
+    if (!password_verify($current_password, $user['password'])) {
         $error = "Current password is incorrect.";
     }
     elseif ($new_password !== $confirm_password) {
@@ -40,12 +40,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $hashed_password = password_hash($new_password, PASSWORD_DEFAULT);
         
         // Update password in database
-        $stmt = $connection->prepare("UPDATE admins SET password = ? WHERE id = ?");
-        $stmt->bind_param("si", $hashed_password, $admin_id);
+        $stmt = $connection->prepare("UPDATE customers SET password = ? WHERE id = ?");
+        $stmt->bind_param("si", $hashed_password, $user_id);
         
         if ($stmt->execute()) {
             $success = "Password changed successfully!";
-            $sendChangeNotification = true;
         } else {
             $error = "Error changing password. Please try again.";
         }
@@ -59,16 +58,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Change Password</title>
-
-    <!-- Google Material Symbols -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
-
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'Segoe UI', sans-serif;
+            font-family: 'Poppins', sans-serif;
         }
 
         body {
@@ -76,128 +73,148 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             display: flex;
             justify-content: center;
             align-items: center;
-            background: linear-gradient(135deg, #050b1a, #071a33, #02040a);
+            background: radial-gradient(circle at top left, #0a1a3a, #050816 40%, #000000 100%);
             overflow: hidden;
-            color: #fff;
+            color: #e6f1ff;
+            padding: 20px;
         }
 
-        /* animated glow background */
-        body::before {
+        body::before,
+        body::after {
             content: "";
             position: absolute;
             width: 500px;
             height: 500px;
-            background: radial-gradient(circle, #1e90ff55, transparent 60%);
-            top: -100px;
-            left: -100px;
-            animation: float 6s ease-in-out infinite;
+            border-radius: 50%;
+            filter: blur(140px);
+            opacity: 0.35;
+            z-index: 0;
+            animation: floatGlow 10s ease-in-out infinite;
+        }
+
+        body::before {
+            background: #1e90ff;
+            top: -150px;
+            left: -120px;
         }
 
         body::after {
-            content: "";
-            position: absolute;
-            width: 600px;
-            height: 600px;
-            background: radial-gradient(circle, #00bfff33, transparent 60%);
+            background: #00c6ff;
             bottom: -150px;
-            right: -150px;
-            animation: float 8s ease-in-out infinite;
+            right: -120px;
+            animation-delay: 3s;
         }
 
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(20px); }
+        @keyframes floatGlow {
+            0%, 100% { transform: translateY(0) scale(1); }
+            50% { transform: translateY(40px) scale(1.15); }
+        }
+
+        .box {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            max-width: 420px;
+            padding: 40px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            box-shadow: 0 0 35px rgba(0, 140, 255, 0.25);
+            animation: fadeIn 0.8s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(25px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         h2 {
             text-align: center;
             margin-bottom: 20px;
-            color: #4da3ff;
-            text-shadow: 0 0 10px #1e90ff;
-            animation: fadeIn 1s ease;
+            font-weight: 600;
+            color: #cfe8ff;
+            letter-spacing: 0.5px;
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        form {
+        .password-field {
             position: relative;
-            width: 360px;
-            padding: 30px;
-            background: rgba(255, 255, 255, 0.05);
-            backdrop-filter: blur(15px);
-            border: 1px solid rgba(77, 163, 255, 0.3);
-            border-radius: 18px;
-            box-shadow: 0 0 25px rgba(30, 144, 255, 0.25);
-            animation: pop 0.8s ease;
+            margin-bottom: 20px;
         }
 
-        @keyframes pop {
-            from { transform: scale(0.9); opacity: 0; }
-            to { transform: scale(1); opacity: 1; }
-        }
-
-        label {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 13px;
-            color: #bcdcff;
-        }
-
-        .input-group {
-            position: relative;
+        .password-field input {
             width: 100%;
-        }
-
-        input {
-            width: 100%;
-            padding: 12px 12px 12px 40px;
-            border: none;
+            padding: 12px 45px 12px 12px;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(10, 18, 40, 0.7);
+            color: #ffffff;
             outline: none;
-            border-radius: 10px;
-            background: rgba(0, 0, 0, 0.4);
-            color: #fff;
-            border: 1px solid rgba(77, 163, 255, 0.2);
             transition: 0.3s ease;
         }
 
-        input:focus {
-            border: 1px solid #4da3ff;
-            box-shadow: 0 0 12px #1e90ff;
+        .password-field input:focus {
+            border-color: #1e90ff;
+            box-shadow: 0 0 15px rgba(30,144,255,0.6);
+            transform: scale(1.03);
+        }
+
+        .toggle-pass {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            color: rgba(255,255,255,0.6);
+            font-size: 20px;
+            transition: 0.3s ease;
+            user-select: none;
+        }
+
+        .toggle-pass:hover {
+            color: #1e90ff;
         }
 
         button {
             width: 100%;
             padding: 12px;
             border: none;
-            border-radius: 10px;
-            background: linear-gradient(90deg, #1e90ff, #0057ff);
+            border-radius: 12px;
+            background: linear-gradient(90deg, #1e90ff, #00c6ff);
             color: white;
-            font-weight: bold;
+            font-weight: 500;
             cursor: pointer;
             transition: 0.3s ease;
-            box-shadow: 0 0 15px #1e90ff55;
+            box-shadow: 0 0 18px rgba(0, 140, 255, 0.35);
         }
 
         button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 0 25px #1e90ff;
+            box-shadow: 0 0 30px rgba(0, 140, 255, 0.6);
         }
 
-        .material-symbols-outlined {
-            position: absolute;
-            left: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #4da3ff;
-            font-size: 20px;
-            pointer-events: none;
+        .success {
+            color: #00ffb3;
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 14px;
+            animation: fadeIn 0.5s ease;
         }
 
-        .field {
-            margin-bottom: 20px;
+        .error {
+            color: #f59e0b;
+            text-align: center;
+            margin-bottom: 15px;
+            font-size: 14px;
+            animation: shake 0.3s ease;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            50% { transform: translateX(5px); }
+            75% { transform: translateX(-5px); }
         }
 
         .back {
@@ -206,114 +223,76 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
 
         .back a {
-            color: #4da3ff;
+            color: #7cc7ff;
             text-decoration: none;
-            font-size: 13px;
-            font-weight: 500;
-            transition: 0.3s ease;
+            transition: 0.3s;
         }
 
         .back a:hover {
-            color: #fff;
-            text-shadow: 0 0 10px #1e90ff;
+            text-shadow: 0 0 12px rgba(30,144,255,0.9);
         }
 
-        .error,
-        .success {
-            padding: 12px;
-            border-radius: 10px;
-            text-align: center;
-            margin-bottom: 15px;
-            font-size: 13px;
-        }
-
-        .error {
-            background: rgba(239, 68, 68, 0.15);
-            color: #fca5a5;
-            border: 1px solid rgba(239, 68, 68, 0.25);
-        }
-
-        .success {
-            background: rgba(34, 197, 94, 0.15);
-            color: #86efac;
-            border: 1px solid rgba(34, 197, 94, 0.25);
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            vertical-align: middle;
         }
     </style>
 <link rel="stylesheet" href="../assets/responsive.css">
 </head>
-
 <body>
+<div class="box">
+    <h2>Change Password</h2>
+
+    <?php if ($success): ?>
+        <p class="success">✅ <?= $success ?></p>
+    <?php endif; ?>
+
+    <?php if ($error): ?>
+        <p class="error">❌ <?= $error ?></p>
+    <?php endif; ?>
 
     <form method="POST">
-        <h2>Change Password</h2>
-
-        <?php if($error): ?>
-            <div class="error"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-
-        <?php if($success): ?>
-            <div class="success"><?= htmlspecialchars($success) ?></div>
-        <?php endif; ?>
-        
-        <div class="field">
-            <label>Current Password:</label>
-            <div class="input-group">
-                <span class="material-symbols-outlined">lock</span>
-                <input type="password" name="old_password" required>
-            </div>
+        <div class="password-field">
+            <input type="password" id="current_password" name="current_password" placeholder="Current Password" required>
+            <span class="material-symbols-outlined toggle-pass" onclick="togglePass('current_password', this)">
+                visibility
+            </span>
         </div>
 
-        <div class="field">
-            <label>New Password:</label>
-            <div class="input-group">
-                <span class="material-symbols-outlined">lock_reset</span>
-                <input type="password" name="new_password" required>
-            </div>
+        <div class="password-field">
+            <input type="password" id="new_password" name="new_password" placeholder="New Password" required>
+            <span class="material-symbols-outlined toggle-pass" onclick="togglePass('new_password', this)">
+                visibility
+            </span>
         </div>
 
-        <div class="field">
-            <label>Confirm New Password:</label>
-            <div class="input-group">
-                <span class="material-symbols-outlined">verified_user</span>
-                <input type="password" name="confirm_password" required>
-            </div>
+        <div class="password-field">
+            <input type="password" id="confirm_password" name="confirm_password" placeholder="Confirm New Password" required>
+            <span class="material-symbols-outlined toggle-pass" onclick="togglePass('confirm_password', this)">
+                visibility
+            </span>
         </div>
 
-        <button type="submit" name="update_password">Update Password</button>
-
-        <div class="back">
-            <a href="login.php">← Back to Login</a>
-        </div>
+        <button type="submit">Change Password</button>
     </form>
 
-<!-- EmailJS SDK -->
-<script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+    <div class="back">
+        <a href="login.php">← Back to Login</a>
+    </div>
+</div>
 
-<?php if ($sendChangeNotification): ?>
-<script type="text/javascript">
-    (function() {
-        // Initialize EmailJS with your Public Key
-        emailjs.init({
-            publicKey: "tPPG5kXv_HpogUqT6"
-        });
+<script>
+function togglePass(id, icon) {
+    const input = document.getElementById(id);
 
-        // Send confirmation email via EmailJS
-        emailjs.send("service_omhbzem", "YOUR_CHANGE_TEMPLATE_ID", { // Replace with your Password Changed Template ID if you create one
-            to_email: "<?= htmlspecialchars($_SESSION['admin_email']) ?>",
-            email: "<?= htmlspecialchars($_SESSION['admin_email']) ?>",
-            to_name: "<?= htmlspecialchars($_SESSION['fullname']) ?>",
-            name: "<?= htmlspecialchars($_SESSION['fullname']) ?>"
-        }).then(
-            function(response) {
-                alert("Password changed successfully and notification sent!");
-            },
-            function(error) {
-                console.error("EmailJS notification failed:", error);
-            }
-        );
-    })();
+    if (input.type === "password") {
+        input.type = "text";
+        icon.textContent = "visibility_off";
+    } else {
+        input.type = "password";
+        icon.textContent = "visibility";
+    }
+}
 </script>
-<?php endif; ?>
-
 </body>
 </html>

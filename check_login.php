@@ -2,49 +2,84 @@
 session_start();
 require('../connection.php');
 
+// SHOW ERRORS FOR DEBUGGING
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
-    $email = trim($_POST['email']);
-    $password = $_POST['password'];
+    $email = trim($_POST['email'] ?? '');
+    $password = trim($_POST['password'] ?? '');
 
-    // Validation
+    // CHECK EMPTY FIELDS
     if (empty($email) || empty($password)) {
-        die("All fields are required!");
+        $_SESSION['error'] = "All fields are required!";
+        header("Location: login.php");
+        exit();
     }
 
-    // Get admin from admins table
-    $stmt = $connection->prepare("SELECT id, name, email, password FROM admin WHERE email = ? LIMIT 1");
+    // GET USER FROM DATABASE
+    $stmt = $connection->prepare("
+        SELECT id, fullname, email, password, status 
+        FROM customers 
+        WHERE email = ? 
+        LIMIT 1
+    ");
+
+    if (!$stmt) {
+        die("Prepare failed: " . $connection->error);
+    }
+
     $stmt->bind_param("s", $email);
     $stmt->execute();
+
     $result = $stmt->get_result();
 
+    // USER FOUND
     if ($result->num_rows === 1) {
-        $admin = $result->fetch_assoc();
 
-        // Verify password
-        if (password_verify($password, $admin['password'])) {
+        $user = $result->fetch_assoc();
 
-            // ✅ Set session
-            $_SESSION['user_id'] = $admin['id'];
-            $_SESSION['name'] = $admin['name'];
-            $_SESSION['is_admin'] = true;
+        // DEBUG (REMOVE LATER)
+        // echo "<pre>";
+        // print_r($user);
+        // exit();
 
+        // VERIFY PASSWORD
+        if (password_verify($password, $user['password'])) {
+
+            // CHECK STATUS
+            if (strtolower($user['status']) !== "active") {
+                $_SESSION['error'] = "Account is not active.";
+                header("Location: login.php");
+                exit();
+            }
+
+            // CREATE SESSION
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['fullname'] = $user['fullname'];
+            $_SESSION['email'] = $user['email'];
+
+            // FORCE SESSION SAVE
+            session_write_close();
+
+            // REDIRECT TO DASHBOARD
             header("Location: dashboard.php");
             exit();
 
         } else {
-            echo "Invalid password!";
+            $_SESSION['error'] = "Incorrect password!";
+            header("Location: login.php");
+            exit();
         }
 
     } else {
-        echo "Admin not found!";
+        $_SESSION['error'] = "No account found with that email!";
+        header("Location: login.php");
+        exit();
     }
 
-    $stmt->close();
-    $connection->close();
-
 } else {
-    // Prevent direct access
     header("Location: login.php");
     exit();
 }

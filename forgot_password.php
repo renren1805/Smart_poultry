@@ -16,18 +16,18 @@ if (isset($_GET['sent']) && $_GET['sent'] == 1) {
 if (isset($_POST['send'])) {
     $email = $_POST['email'];
 
-    $check = mysqli_query($connection, "SELECT * FROM admins WHERE Email='$email'");
+    $check = mysqli_query($connection, "SELECT * FROM customers WHERE Email='$email'");
 
     if (mysqli_num_rows($check) > 0) {
-        $admin = mysqli_fetch_assoc($check);
-        $adminName = $admin['fullname'] ?? 'Admin';
+        $customer = mysqli_fetch_assoc($check);
+        $customerName = $customer['fullname'] ?? 'Customer';
 
         $token = bin2hex(random_bytes(32));
         $expiry = date('Y-m-d H:i:s', strtotime('+1 hour'));
 
-        mysqli_query($connection, "UPDATE admins SET reset_token='$token', token_expiry='$expiry' WHERE Email='$email'");
+        mysqli_query($connection, "UPDATE customers SET reset_token='$token', token_expiry='$expiry' WHERE Email='$email'");
 
-        $resetLink = "http://localhost/FINALS/admin/reset_password.php?token=$token";
+        $resetLink = "http://localhost/FINALS/user/reset_password.php?token=$token";
         $sendEmailjs = true;
     } else {
         $error = "Email not found.";

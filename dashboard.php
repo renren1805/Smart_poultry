@@ -1,508 +1,536 @@
 <?php
 session_start();
+require('../connection.php');
 
-if (!isset($_SESSION['admin_id'])) {
+if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
     exit();
 }
 
-include '../connection.php';
+$customer_id = $_SESSION['user_id'];
 
-// --- DATA FETCHING & CALCULATIONS ---
+// Get customer info
+$customer_query = "SELECT * FROM customers WHERE id = ?";
+$stmt = mysqli_prepare($connection, $customer_query);
+mysqli_stmt_bind_param($stmt, "i", $customer_id);
+mysqli_stmt_execute($stmt);
+$customer = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
 
-// Helper function to get count and trend
-function getCountAndTrend($connection, $table, $date_col, $condition = "1=1") {
-    $total = mysqli_fetch_assoc(mysqli_query($connection, "SELECT COUNT(*) as c FROM $table WHERE $condition"))['c'];
-    $current = mysqli_fetch_assoc(mysqli_query($connection, "SELECT COUNT(*) as c FROM $table WHERE $condition AND $date_col >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"))['c'];
-    $prev = mysqli_fetch_assoc(mysqli_query($connection, "SELECT COUNT(*) as c FROM $table WHERE $condition AND $date_col >= DATE_SUB(CURDATE(), INTERVAL 14 DAY) AND $date_col < DATE_SUB(CURDATE(), INTERVAL 7 DAY)"))['c'];
-    
-    $trend = 0;
-    if ($prev > 0) $trend = (($current - $prev) / $prev) * 100;
-    elseif ($current > 0) $trend = 100;
-    
-    return ['total' => $total, 'trend' => $trend];
+// Get cart count
+$cart_query = "SELECT COUNT(*) as count FROM shopping_cart WHERE customer_id = ?";
+$cart_stmt = mysqli_prepare($connection, $cart_query);
+mysqli_stmt_bind_param($cart_stmt, "i", $customer_id);
+mysqli_stmt_execute($cart_stmt);
+$cart_count = mysqli_fetch_assoc(mysqli_stmt_get_result($cart_stmt))['count'];
+
+// Get order statistics
+$total_orders = 0;
+$pending_orders = 0;
+$completed_orders = 0;
+
+$orders_query = "SELECT 
+    COUNT(*) as total,
+    SUM(CASE WHEN status IN('Draft', 'Pending Payment', 'Pending Approval', 'Approved', 'Processed', 'Shipped') THEN 1 ELSE 0 END) as pending,
+    SUM(CASE WHEN status = 'Delivered' THEN 1 ELSE 0 END) as completed
+    FROM orders WHERE customer_id = ?";
+$orders_stmt = mysqli_prepare($connection, $orders_query);
+mysqli_stmt_bind_param($orders_stmt, "i", $customer_id);
+mysqli_stmt_execute($orders_stmt);
+$order_stats = mysqli_fetch_assoc(mysqli_stmt_get_result($orders_stmt));
+
+if ($order_stats) {
+    $total_orders = $order_stats['total'];
+    $pending_orders = $order_stats['pending'];
+    $completed_orders = $order_stats['completed'];
 }
 
-// Helper function to get sum and trend
-function getSumAndTrend($connection, $table, $sum_col, $date_col, $condition = "1=1") {
-    $total = mysqli_fetch_assoc(mysqli_query($connection, "SELECT SUM($sum_col) as s FROM $table WHERE $condition"))['s'] ?? 0;
-    $current = mysqli_fetch_assoc(mysqli_query($connection, "SELECT SUM($sum_col) as s FROM $table WHERE $condition AND $date_col >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"))['s'] ?? 0;
-    $prev = mysqli_fetch_assoc(mysqli_query($connection, "SELECT SUM($sum_col) as s FROM $table WHERE $condition AND $date_col >= DATE_SUB(CURDATE(), INTERVAL 14 DAY) AND $date_col < DATE_SUB(CURDATE(), INTERVAL 7 DAY)"))['s'] ?? 0;
-    
-    $trend = 0;
-    if ($prev > 0) $trend = (($current - $prev) / $prev) * 100;
-    elseif ($current > 0) $trend = 100;
-    
-    return ['total' => $total, 'trend' => $trend];
-}
-
-$orders_data = getCountAndTrend($connection, 'orders', 'created_at');
-$delivered_data = getCountAndTrend($connection, 'orders', 'actual_delivery', "status='Delivered'");
-$pending_data = getCountAndTrend($connection, 'orders', 'created_at', "status IN ('Pending Payment', 'Pending Approval')");
-$revenue_data = getSumAndTrend($connection, 'orders', 'total_amount', 'created_at', "status IN ('Delivered', 'Shipped', 'Processed')");
-
-// Daily Revenue (Last 7 Days)
-$days_data = [];
-$chart_labels = [];
-$chart_revenue = [];
-for ($i = 6; $i >= 0; $i--) {
-    $date = date('Y-m-d', strtotime("-$i days"));
-    $days_data[$date] = [
-        'day_name' => date('D', strtotime("-$i days")),
-        'revenue' => 0
-    ];
-}
-
-$rev_query = "SELECT DATE(created_at) as date, SUM(total_amount) as total 
-              FROM orders 
-              WHERE status IN ('Delivered', 'Shipped', 'Processed') AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
-              GROUP BY DATE(created_at)";
-$rev_result = mysqli_query($connection, $rev_query);
-while ($row = mysqli_fetch_assoc($rev_result)) {
-    if (isset($days_data[$row['date']])) {
-        $days_data[$row['date']]['revenue'] = floatval($row['total']);
-    }
-}
-foreach ($days_data as $date => $info) {
-    $chart_labels[] = $info['day_name'];
-    $chart_revenue[] = $info['revenue'];
-}
-
-// Customer Flow (Mocked for Demo - assuming some are new and some returning)
-// We will generate random reasonable data for the chart to look good
-$flow_labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-$flow_new = [12, 19, 15, 22, 30, 28, 25];
-$flow_returning = [20, 25, 22, 35, 45, 50, 42];
-
-// Recent Activity Log
-$recent_query = "SELECT order_number, status, created_at FROM orders ORDER BY created_at DESC LIMIT 5";
-$recent_result = mysqli_query($connection, $recent_query);
-$activities = [];
-while ($row = mysqli_fetch_assoc($recent_result)) {
-    $activities[] = $row;
-}
+// Get recent orders
+$recent_query = "SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC LIMIT 5";
+$recent_stmt = mysqli_prepare($connection, $recent_query);
+mysqli_stmt_bind_param($recent_stmt, "i", $customer_id);
+mysqli_stmt_execute($recent_stmt);
+$recent_orders = mysqli_stmt_get_result($recent_stmt);
 ?>
 
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard - Poultry Shop</title>
-    <!-- Chart.js CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>Customer Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" />
     <style>
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined');
+        *{
+            margin:0;
+            padding:0;
+            box-sizing:border-box;
+            font-family:'Outfit', sans-serif;
+        }
 
-*{ margin:0; padding:0; box-sizing:border-box; font-family:'Outfit', sans-serif; }
+        :root{
+            --primary: #f59e0b;
+            --secondary: #34A853;
+            --accent: #d97706;
+            --warning: #FBBC05;
+            --dark: #0f172a;
+            --light: #f8fafc;
+            --blue-glow: 0 0 30px rgba(245, 158, 11, 0.4);
+        }
 
-:root{
-    --bg-dark:#0f172a;
-    --bg-card:rgba(15,23,42,0.75);
-    --border:rgba(255,255,255,0.08);
-    --primary:#3b82f6;
-    --primary-hover:#2563eb;
-    --text:#ffffff;
-    --text-light:#b6c2d1;
-    --danger:#ef4444;
-    --success:#10b981;
-    --warning:#f59e0b;
-}
+        body{
+            min-height:100vh;
+            background:linear-gradient(135deg, #090e1a 0%, #0f172a 50%, #090e1a 100%);
+            background-attachment:fixed;
+            color:white;
+            overflow-x:hidden;
+        }
 
-body{
-    background: radial-gradient(circle at top left, rgba(59,130,246,0.15), transparent 40%),
-                radial-gradient(circle at bottom right, rgba(0,0,0,0.8), transparent 40%),
-                linear-gradient(135deg,#090e1a,#0f172a,#090e1a);
-    background-attachment:fixed;
-    color:var(--text);
-    min-height:100vh;
-    overflow-x:hidden;
-}
+        .container{
+            display:flex;
+            min-height:100vh;
+        }
 
-/* SIDEBAR */
-.sidebar{
-    width:280px;
-    background:rgba(15,23,42,0.8);
-    backdrop-filter:blur(18px);
-    border-right:1px solid rgba(255,255,255,0.08);
-    box-shadow:0 0 30px rgba(59,130,246,.1);
-    color:white;
-    padding:25px 20px;
-    position:fixed;
-    top:0; left:0; height:100vh;
-    overflow-y:auto; z-index:9999;
-}
-.sidebar h2{ font-size:26px; font-weight:700; text-align:center; margin-bottom:30px; color:white; text-shadow:0 0 15px rgba(59,130,246,.4); }
-.sidebar-menu{ list-style:none; }
-.sidebar-menu li{ margin-bottom:8px; }
-.sidebar-menu a{ display:flex; align-items:center; gap:12px; text-decoration:none; color:#d9e2f1; padding:14px 18px; border-radius:14px; font-size:14px; font-weight:500; transition:.3s; }
-.sidebar-menu a:hover, .sidebar-menu a.active{ background:rgba(59,130,246,.15); border:1px solid rgba(59,130,246,.2); color:white; transform:translateX(5px); }
+        /* SIDEBAR */
+        .sidebar{
+            width:280px;
+            background:rgba(15, 23, 42, 0.8);
+            backdrop-filter:blur(20px);
+            border-right:1px solid rgba(255,255,255,.1);
+            padding:30px 20px;
+            position:fixed;
+            top:0;
+            left:0;
+            height:100vh;
+            overflow-y:auto;
+            transition:.3s ease;
+            z-index:9999;
+        }
 
-/* MAIN CONTENT */
-.main-content{ margin-left:280px; padding:30px; }
-.header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:30px; }
-.header h1{ font-size:28px; font-weight:700; }
-.user-profile{ display:flex; align-items:center; gap:15px; }
-.user-profile span{ color:var(--text-light); font-size:14px; }
-.logout-btn{ background:rgba(239,68,68,.15); color:#fca5a5; padding:8px 16px; border-radius:8px; text-decoration:none; font-size:13px; border:1px solid rgba(239,68,68,.2); transition:.3s; }
-.logout-btn:hover{ background:#ef4444; color:white; }
+        .sidebar h2{
+            font-size:28px;
+            font-weight:700;
+            color:#fff;
+            margin-bottom:40px;
+            text-shadow:0 0 20px rgba(245, 158, 11, 0.5);
+            display:flex;
+            align-items:center;
+            gap:10px;
+        }
 
-/* TOP METRICS */
-.metrics-grid{ display:grid; grid-template-columns:repeat(4, 1fr); gap:20px; margin-bottom:30px; }
-.metric-card{ background:var(--bg-card); backdrop-filter:blur(20px); border:1px solid var(--border); border-radius:20px; padding:25px; display:flex; flex-direction:column; gap:10px; box-shadow:0 10px 30px rgba(0,0,0,0.2); transition:.3s; }
-.metric-card:hover{ transform:translateY(-5px); box-shadow:0 15px 40px rgba(59,130,246,0.15); border-color:rgba(59,130,246,0.3); }
-.metric-header{ display:flex; justify-content:space-between; align-items:center; color:var(--text-light); font-size:14px; font-weight:500; text-transform:uppercase; letter-spacing:1px; }
-.metric-icon{ width:40px; height:40px; border-radius:12px; display:flex; align-items:center; justify-content:center; }
-.icon-blue{ background:rgba(59,130,246,0.15); color:var(--primary); }
-.icon-green{ background:rgba(16,185,129,0.15); color:var(--success); }
-.icon-purple{ background:rgba(168,85,247,0.15); color:#a855f7; }
-.icon-yellow{ background:rgba(245,158,11,0.15); color:var(--warning); }
-.metric-value{ font-size:32px; font-weight:800; color:white; }
-.metric-trend{ font-size:13px; display:flex; align-items:center; gap:5px; font-weight:500; }
-.trend-up{ color:var(--success); }
-.trend-down{ color:var(--danger); }
+        .sidebar-menu{
+            list-style:none;
+        }
 
-/* DASHBOARD LAYOUT */
-.dashboard-layout{ display:grid; grid-template-columns:2fr 1fr; gap:25px; }
+        .sidebar-menu li{
+            margin-bottom:10px;
+        }
 
-/* CHARTS SECTION */
-.charts-container{ display:flex; flex-direction:column; gap:25px; }
-.chart-card{ background:var(--bg-card); backdrop-filter:blur(20px); border:1px solid var(--border); border-radius:20px; padding:25px; box-shadow:0 10px 30px rgba(0,0,0,0.2); }
-.chart-header{ margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; }
-.chart-title{ font-size:18px; font-weight:600; color:white; }
+        .sidebar-menu a{
+            display:flex;
+            align-items:center;
+            gap:12px;
+            padding:14px 18px;
+            color:#94a3b8;
+            text-decoration:none;
+            border-radius:12px;
+            transition:.3s ease;
+            font-weight:500;
+        }
 
-/* RIGHT PANELS */
-.side-panels{ display:flex; flex-direction:column; gap:20px; }
-.panel-card{ background:var(--bg-card); backdrop-filter:blur(20px); border:1px solid var(--border); border-radius:20px; padding:25px; box-shadow:0 10px 30px rgba(0,0,0,0.2); }
-.panel-card h3{ font-size:16px; font-weight:600; margin-bottom:15px; color:var(--text-light); }
-.panel-value{ font-size:28px; font-weight:700; color:white; margin-bottom:5px; }
-.panel-sub{ font-size:13px; color:var(--success); font-weight:500; }
+        .sidebar-menu a:hover,
+        .sidebar-menu a.active{
+            background:rgba(245, 158, 11, 0.15);
+            color:#fff;
+            border:1px solid rgba(245, 158, 11, 0.25);
+        }
 
-/* ACTIVITY LOG */
-.activity-log{ list-style:none; }
-.activity-item{ display:flex; gap:15px; margin-bottom:15px; padding-bottom:15px; border-bottom:1px solid rgba(255,255,255,0.05); }
-.activity-item:last-child{ margin-bottom:0; padding-bottom:0; border-bottom:none; }
-.activity-icon{ width:35px; height:35px; border-radius:50%; background:rgba(255,255,255,0.05); display:flex; align-items:center; justify-content:center; color:var(--primary); flex-shrink:0; }
-.activity-details p{ font-size:14px; color:white; font-weight:500; margin-bottom:4px; }
-.activity-details span{ font-size:12px; color:var(--text-light); }
+        .sidebar-menu .material-symbols-outlined{
+            font-size:22px;
+        }
 
-/* RESPONSIVE */
-@media(max-width:1200px){
-    .metrics-grid{ grid-template-columns:repeat(2, 1fr); }
-    .dashboard-layout{ grid-template-columns:1fr; }
-}
-@media (max-width: 1024px){
-    .sidebar{ transform:translateX(-100%); }
-    .main-content{ margin-left:0; }
-    .metrics-grid{ grid-template-columns:1fr; }
-}
-.menu-toggle{
-    background:rgba(59,130,246,.15);
-    color:white;
-    padding:12px 16px;
-    margin-right:15px;
-    border:1px solid rgba(255,255,255,.1);
-    border-radius:14px;
-    cursor:pointer;
-    display:none;
-    font-size:16px;
-    font-weight:600;
-    transition:.3s;
-}
-.menu-toggle:hover{
-    background:#3b82f6;
-}
-@media (max-width: 1024px){
-    .menu-toggle{
-        display:block;
-    }
-}
+        .cart-badge{
+            background:var(--accent);
+            color:white;
+            padding:2px 8px;
+            border-radius:10px;
+            font-size:12px;
+            font-weight:600;
+            margin-left:auto;
+        }
+
+        /* MAIN CONTENT */
+        .main-content{
+            margin-left:280px;
+            flex:1;
+            padding:30px;
+        }
+
+        .header{
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            margin-bottom:30px;
+            padding:20px 30px;
+            background:rgba(255,255,255,.05);
+            backdrop-filter:blur(15px);
+            border-radius:20px;
+            border:1px solid rgba(255,255,255,.1);
+        }
+
+        .header h1{
+            font-size:32px;
+            font-weight:700;
+            color:#fff;
+            text-shadow:0 0 20px rgba(245, 158, 11, 0.3);
+        }
+
+        .user-info{
+            display:flex;
+            align-items:center;
+            gap:15px;
+        }
+
+        .user-info span{
+            color:#94a3b8;
+            font-size:14px;
+        }
+
+        .user-info strong{
+            color:#fff;
+            font-size:16px;
+        }
+
+        /* STATS GRID */
+        .stats-grid{
+            display:grid;
+            grid-template-columns:repeat(auto-fit, minmax(250px, 1fr));
+            gap:20px;
+            margin-bottom:30px;
+        }
+
+        .stat-card{
+            background:rgba(255,255,255,.05);
+            backdrop-filter:blur(20px);
+            border-radius:20px;
+            padding:25px;
+            border:1px solid rgba(255,255,255,.1);
+            transition:.3s ease;
+        }
+
+        .stat-card:hover{
+            transform:translateY(-5px);
+            box-shadow:var(--blue-glow);
+            border-color:rgba(245, 158, 11, 0.3);
+        }
+
+        .stat-card .icon{
+            width:50px;
+            height:50px;
+            background:rgba(245, 158, 11, 0.15);
+            border-radius:12px;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            margin-bottom:15px;
+        }
+
+        .stat-card .icon .material-symbols-outlined{
+            font-size:28px;
+            color:var(--primary);
+        }
+
+        .stat-card h3{
+            font-size:14px;
+            color:#94a3b8;
+            margin-bottom:5px;
+        }
+
+        .stat-card .value{
+            font-size:32px;
+            font-weight:700;
+            color:#fff;
+        }
+
+        /* QUICK ACTIONS */
+        .quick-actions{
+            display:grid;
+            grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));
+            gap:15px;
+            margin-bottom:30px;
+        }
+
+        .action-btn{
+            background:rgba(245, 158, 11, 0.15);
+            border:1px solid rgba(245, 158, 11, 0.25);
+            color:white;
+            padding:20px;
+            border-radius:16px;
+            text-decoration:none;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            gap:10px;
+            transition:.3s ease;
+            backdrop-filter:blur(15px);
+        }
+
+        .action-btn:hover{
+            background:var(--primary);
+            transform:translateY(-3px);
+            box-shadow:var(--blue-glow);
+        }
+
+        .action-btn .material-symbols-outlined{
+            font-size:32px;
+        }
+
+        .action-btn span{
+            font-weight:600;
+            font-size:14px;
+        }
+
+        /* RECENT ORDERS */
+        .recent-orders{
+            background:rgba(255,255,255,.05);
+            backdrop-filter:blur(20px);
+            border-radius:20px;
+            padding:25px;
+            border:1px solid rgba(255,255,255,.1);
+        }
+
+        .recent-orders h2{
+            font-size:22px;
+            font-weight:600;
+            color:#fff;
+            margin-bottom:20px;
+        }
+
+        table{
+            width:100%;
+            border-collapse:collapse;
+        }
+
+        th{
+            text-align:left;
+            padding:15px;
+            color:#94a3b8;
+            font-weight:600;
+            font-size:13px;
+            text-transform:uppercase;
+            letter-spacing:1px;
+            border-bottom:1px solid rgba(255,255,255,.1);
+        }
+
+        td{
+            padding:15px;
+            color:#fff;
+            font-size:14px;
+            border-bottom:1px solid rgba(255,255,255,.05);
+        }
+
+        tr:last-child td{
+            border-bottom:none;
+        }
+
+        .status{
+            padding:6px 12px;
+            border-radius:8px;
+            font-size:12px;
+            font-weight:600;
+        }
+
+        .status.pending{
+            background:rgba(251,188,5,.15);
+            color:#fbbf05;
+            border:1px solid rgba(251,188,5,.25);
+        }
+
+        .status.approved{
+            background:rgba(245, 158, 11, 0.15);
+            color:#4285F4;
+            border:1px solid rgba(245, 158, 11, 0.25);
+        }
+
+        .status.delivered{
+            background:rgba(52,168,83,.15);
+            color:#34A853;
+            border:1px solid rgba(52,168,83,.25);
+        }
+
+        .status.cancelled{
+            background:rgba(217, 119, 6,.15);
+            color:#ea4335;
+            border:1px solid rgba(217, 119, 6,.25);
+        }
+
+        /* BUTTONS */
+        .btn{
+            border:none;
+            outline:none;
+            cursor:pointer;
+            border-radius:14px;
+            font-weight:600;
+            transition:.3s ease;
+            padding:10px 16px;
+            color:white;
+            text-decoration:none;
+            background:rgba(245, 158, 11, 0.15);
+            border:1px solid rgba(245, 158, 11, 0.2);
+            backdrop-filter:blur(12px);
+        }
+
+        .btn:hover{
+            background:var(--primary);
+            transform:translateY(-2px);
+            box-shadow:0 0 20px rgba(245, 158, 11, 0.35);
+        }
+
+        .logout-btn{
+            background:rgba(217, 119, 6,.15);
+            border-color:rgba(217, 119, 6,.25);
+        }
+
+        .logout-btn:hover{
+            background:var(--accent);
+            box-shadow:0 0 20px rgba(217, 119, 6,.35);
+        }
+
+        .menu-toggle{
+            background:rgba(245, 158, 11, 0.15);
+            color:white;
+            padding:12px 16px;
+            margin-right:15px;
+            border:1px solid rgba(255,255,255,.1);
+            border-radius:14px;
+            cursor:pointer;
+            display:none;
+        }
+
+        .menu-toggle:hover{
+            background:var(--primary);
+        }
+
+        /* RESPONSIVE */
+        @media(max-width:1024px){
+            .header{
+                flex-direction:column;
+                align-items:flex-start;
+                gap:15px;
+            }
+
+            .stats-grid{
+                grid-template-columns:1fr;
+            }
+
+            .quick-actions{
+                grid-template-columns:1fr;
+            }
+        }
     </style>
 <link rel="stylesheet" href="../assets/responsive.css">
 </head>
 <body>
     <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+    <div class="container">
+        <div class="sidebar">
+            <h2>
+                <span class="material-symbols-outlined">storefront</span>
+                Smart Poultry
+            </h2>
+            <ul class="sidebar-menu">
+                <li><a href="dashboard.php" class="active"><span class="material-symbols-outlined">dashboard</span> Dashboard</a></li>
+                <li><a href="browse_products.php"><span class="material-symbols-outlined">shopping_bag</span> Browse Products</a></li>
+                <li><a href="cart.php"><span class="material-symbols-outlined">shopping_cart</span> My Cart <span class="cart-badge"><?= $cart_count ?></span></a></li>
+                <li><a href="view_order_history.php"><span class="material-symbols-outlined">history</span> Order History</a></li>
+                <li><a href="make_payment.php"><span class="material-symbols-outlined">payment</span> Make Payment</a></li>
+                <li><a href="logout.php" class="logout-btn"><span class="material-symbols-outlined">logout</span> Logout</a></li>
+            </ul>
+        </div>
 
-    <!-- SIDEBAR -->
-    <div class="sidebar">
-        <h2>Smart Poultry</h2>
-        <ul class="sidebar-menu">
-            <li><a href="dashboard.php" class="active"><span class="material-symbols-outlined">dashboard</span> Overview</a></li>
-            
-            <div style="color:#64748b; font-size:11px; text-transform:uppercase; margin:20px 0 10px 15px; font-weight:600; letter-spacing:1px;">Orders</div>
-            <li><a href="verify_orders.php"><span class="material-symbols-outlined">fact_check</span> Verify Order</a></li>
-            <li><a href="check_payment.php"><span class="material-symbols-outlined">payments</span> Check Payment</a></li>
-            <li><a href="pack_order.php"><span class="material-symbols-outlined">inventory_2</span> Pack Order</a></li>
-            <li><a href="ship_out_orders.php"><span class="material-symbols-outlined">local_shipping</span> Ship Out</a></li>
-            <li><a href="view_orders.php"><span class="material-symbols-outlined">receipt_long</span> View Orders</a></li>
-            
-            <div style="color:#64748b; font-size:11px; text-transform:uppercase; margin:20px 0 10px 15px; font-weight:600; letter-spacing:1px;">Inventory</div>
-            <li><a href="check_stock.php"><span class="material-symbols-outlined">analytics</span> Check Stock</a></li>
-            <li><a href="manage_inventory.php"><span class="material-symbols-outlined">category</span> Manage Inventory</a></li>
-            <li><a href="restock.php"><span class="material-symbols-outlined">add_business</span> Restock</a></li>
-            
-            <div style="color:#64748b; font-size:11px; text-transform:uppercase; margin:20px 0 10px 15px; font-weight:600; letter-spacing:1px;">Products</div>
-            <li><a href="add_product.php"><span class="material-symbols-outlined">add_circle</span> Add Product</a></li>
-            <li><a href="update_product.php"><span class="material-symbols-outlined">edit_square</span> Update Product</a></li>
-        </ul>
-    </div>
-
-    <!-- MAIN CONTENT -->
-    <div class="main-content">
-        <div class="header">
-            <div style="display:flex; align-items:center;">
-                <button class="menu-toggle" onclick="toggleSidebar()"><span class="material-symbols-outlined">menu</span></button>
-                <h1>Dashboard Overview</h1>
-            </div>
-            <div class="user-profile">
-                <span>Welcome, Admin</span>
+        <div class="main-content">
+            <div class="header">
+                <div style="display:flex; align-items:center;">
+                    <button class="menu-toggle" onclick="toggleSidebar()"><span class="material-symbols-outlined">menu</span></button>
+                    <h1>Welcome, <?= htmlspecialchars($customer['fullname']) ?></h1>
+                </div>
+                <div class="user-info">
+                    <span><?= htmlspecialchars($customer['email']) ?></span>
+                </div>
                 <a href="change_password.php" style="color:var(--primary); font-size:13px; text-decoration:none;">Change Password</a>
-                <a href="logout.php" class="logout-btn">Logout</a>
-            </div>
-        </div>
-
-        <!-- TOP METRICS -->
-        <div class="metrics-grid">
-            <div class="metric-card">
-                <div class="metric-header">
-                    <span>Total Orders</span>
-                    <div class="metric-icon icon-blue"><span class="material-symbols-outlined">shopping_cart</span></div>
-                </div>
-                <div class="metric-value"><?= number_format($orders_data['total']) ?></div>
-                <div class="metric-trend <?= $orders_data['trend'] >= 0 ? 'trend-up' : 'trend-down' ?>">
-                    <span class="material-symbols-outlined" style="font-size:16px;"><?= $orders_data['trend'] >= 0 ? 'trending_up' : 'trending_down' ?></span>
-                    <?= number_format(abs($orders_data['trend']), 1) ?>% vs last week
-                </div>
             </div>
 
-            <div class="metric-card">
-                <div class="metric-header">
-                    <span>Total Delivered</span>
-                    <div class="metric-icon icon-green"><span class="material-symbols-outlined">task_alt</span></div>
-                </div>
-                <div class="metric-value"><?= number_format($delivered_data['total']) ?></div>
-                <div class="metric-trend <?= $delivered_data['trend'] >= 0 ? 'trend-up' : 'trend-down' ?>">
-                    <span class="material-symbols-outlined" style="font-size:16px;"><?= $delivered_data['trend'] >= 0 ? 'trending_up' : 'trending_down' ?></span>
-                    <?= number_format(abs($delivered_data['trend']), 1) ?>% vs last week
-                </div>
-            </div>
-
-            <div class="metric-card">
-                <div class="metric-header">
-                    <span>Total Revenue</span>
-                    <div class="metric-icon icon-purple"><span class="material-symbols-outlined">account_balance_wallet</span></div>
-                </div>
-                <div class="metric-value">₱<?= number_format($revenue_data['total'], 2) ?></div>
-                <div class="metric-trend <?= $revenue_data['trend'] >= 0 ? 'trend-up' : 'trend-down' ?>">
-                    <span class="material-symbols-outlined" style="font-size:16px;"><?= $revenue_data['trend'] >= 0 ? 'trending_up' : 'trending_down' ?></span>
-                    <?= number_format(abs($revenue_data['trend']), 1) ?>% vs last week
-                </div>
-            </div>
-
-            <div class="metric-card">
-                <div class="metric-header">
-                    <span>Pending Orders</span>
-                    <div class="metric-icon icon-yellow"><span class="material-symbols-outlined">pending_actions</span></div>
-                </div>
-                <div class="metric-value"><?= number_format($pending_data['total']) ?></div>
-                <div class="metric-trend <?= $pending_data['trend'] <= 0 ? 'trend-up' : 'trend-down' ?>">
-                    <!-- Less pending is better, so down is green -->
-                    <span class="material-symbols-outlined" style="font-size:16px;"><?= $pending_data['trend'] >= 0 ? 'trending_up' : 'trending_down' ?></span>
-                    <?= number_format(abs($pending_data['trend']), 1) ?>% vs last week
-                </div>
-            </div>
-        </div>
-
-        <div class="dashboard-layout">
-            
-            <!-- CHARTS SECTION -->
-            <div class="charts-container">
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <div class="chart-title">Daily Revenue (Last 7 Days)</div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="icon">
+                        <span class="material-symbols-outlined">shopping_bag</span>
                     </div>
-                    <div style="height: 300px;">
-                        <canvas id="revenueChart"></canvas>
-                    </div>
+                    <h3>Total Orders</h3>
+                    <div class="value"><?= $total_orders ?></div>
                 </div>
-
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <div class="chart-title">Customer Flow</div>
+                <div class="stat-card">
+                    <div class="icon">
+                        <span class="material-symbols-outlined">pending</span>
                     </div>
-                    <div style="height: 300px;">
-                        <canvas id="flowChart"></canvas>
-                    </div>
+                    <h3>Pending Orders</h3>
+                    <div class="value"><?= $pending_orders ?></div>
                 </div>
-            </div>
-
-            <!-- RIGHT PANELS -->
-            <div class="side-panels">
-                <div class="panel-card" style="background: linear-gradient(135deg, rgba(59,130,246,0.2), rgba(37,99,235,0.05)); border-color: rgba(59,130,246,0.3);">
-                    <h3>Total Sales (This Month)</h3>
-                    <div class="panel-value">₱<?= number_format($revenue_data['total'] * 0.45, 2) /* Simulated monthly portion */ ?></div>
-                    <div class="panel-sub">+12.4% vs last month</div>
-                </div>
-
-                <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
-                    <div class="panel-card">
-                        <h3>Sessions</h3>
-                        <div class="panel-value" style="font-size:24px;">12,450</div>
-                        <div class="panel-sub" style="color:var(--text-light); font-size:12px;">Active weekly</div>
+                <div class="stat-card">
+                    <div class="icon">
+                        <span class="material-symbols-outlined">check_circle</span>
                     </div>
-                    <div class="panel-card">
-                        <h3>Customer Rate</h3>
-                        <div class="panel-value" style="font-size:24px;">64.2%</div>
-                        <div class="panel-sub" style="color:var(--text-light); font-size:12px;">Returning buyers</div>
-                    </div>
+                    <h3>Completed Orders</h3>
+                    <div class="value"><?= $completed_orders ?></div>
                 </div>
-
-                <div class="panel-card" style="flex:1;">
-                    <h3 style="margin-bottom:20px;">Recent Activity</h3>
-                    <ul class="activity-log">
-                        <?php if(empty($activities)): ?>
-                            <p style="color:#64748b; font-size:13px; text-align:center;">No recent activity</p>
-                        <?php else: ?>
-                            <?php foreach($activities as $act): ?>
-                            <li class="activity-item">
-                                <div class="activity-icon">
-                                    <span class="material-symbols-outlined" style="font-size:18px;">notifications</span>
-                                </div>
-                                <div class="activity-details">
-                                    <p>Order #<?= htmlspecialchars($act['order_number']) ?></p>
-                                    <span>Status changed to <b><?= htmlspecialchars($act['status']) ?></b> • <?= date('M d, g:i A', strtotime($act['created_at'])) ?></span>
-                                </div>
-                            </li>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
-                    </ul>
+                <div class="stat-card">
+                    <div class="icon">
+                        <span class="material-symbols-outlined">shopping_cart</span>
+                    </div>
+                    <h3>Cart Items</h3>
+                    <div class="value"><?= $cart_count ?></div>
                 </div>
             </div>
-
+  
+            <div class="recent-orders">
+                <h2>Recent Orders</h2>
+                <?php if (mysqli_num_rows($recent_orders) > 0): ?>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Order #</th>
+                                    <th>Date</th>
+                                    <th>Total</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php while ($order = mysqli_fetch_assoc($recent_orders)): ?>
+                                    <tr>
+                                        <td><?= htmlspecialchars($order['order_number']) ?></td>
+                                        <td><?= date('M d, Y', strtotime($order['created_at'])) ?></td>
+                                        <td>₱<?= number_format($order['total_amount'], 2) ?></td>
+                                        <td>
+                                            <span class="status <?= strtolower(str_replace(' ', '', $order['status'])) ?>">
+                                                <?= htmlspecialchars($order['status']) ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <a href="view_order_history.php?order_id=<?= $order['id'] ?>" class="btn">View</a>
+                                        </td>
+                                    </tr>
+                                <?php endwhile; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php else: ?>
+                    <p style="color:#94a3b8; text-align:center; padding:20px;">No orders yet. Start shopping!</p>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 
-    <script>
-        // Set Chart.js Defaults
-        Chart.defaults.color = '#94a3b8';
-        Chart.defaults.font.family = "'Outfit', sans-serif";
-        
-        // 1. Daily Revenue Chart
-        const revCtx = document.getElementById('revenueChart').getContext('2d');
-        
-        // Create Gradient
-        let gradient = revCtx.createLinearGradient(0, 0, 0, 300);
-        gradient.addColorStop(0, 'rgba(59, 130, 246, 0.5)');
-        gradient.addColorStop(1, 'rgba(59, 130, 246, 0.0)');
-
-        new Chart(revCtx, {
-            type: 'line',
-            data: {
-                labels: <?= json_encode($chart_labels) ?>,
-                datasets: [{
-                    label: 'Revenue (₱)',
-                    data: <?= json_encode($chart_revenue) ?>,
-                    borderColor: '#3b82f6',
-                    backgroundColor: gradient,
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.4,
-                    pointBackgroundColor: '#fff',
-                    pointBorderColor: '#3b82f6',
-                    pointBorderWidth: 2,
-                    pointRadius: 4,
-                    pointHoverRadius: 6
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: 'rgba(15,23,42,0.9)',
-                        titleFont: { size: 13 },
-                        bodyFont: { size: 14, weight: 'bold' },
-                        padding: 12,
-                        cornerRadius: 8,
-                        displayColors: false,
-                        callbacks: {
-                            label: function(context) {
-                                return '₱ ' + context.parsed.y.toLocaleString();
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: 'rgba(255,255,255,0.05)', drawBorder: false },
-                        ticks: {
-                            callback: function(value) { return '₱' + value; }
-                        }
-                    },
-                    x: {
-                        grid: { display: false, drawBorder: false }
-                    }
-                }
-            }
-        });
-
-        // 2. Customer Flow Chart
-        const flowCtx = document.getElementById('flowChart').getContext('2d');
-        new Chart(flowCtx, {
-            type: 'bar',
-            data: {
-                labels: <?= json_encode($flow_labels) ?>,
-                datasets: [
-                    {
-                        label: 'New Customers',
-                        data: <?= json_encode($flow_new) ?>,
-                        backgroundColor: '#3b82f6',
-                        borderRadius: 6,
-                        barPercentage: 0.6,
-                        categoryPercentage: 0.8
-                    },
-                    {
-                        label: 'Returning Customers',
-                        data: <?= json_encode($flow_returning) ?>,
-                        backgroundColor: 'rgba(255, 255, 255, 0.15)',
-                        borderRadius: 6,
-                        barPercentage: 0.6,
-                        categoryPercentage: 0.8
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'top',
-                        align: 'end',
-                        labels: { boxWidth: 12, usePointStyle: true, pointStyle: 'circle' }
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(15,23,42,0.9)',
-                        padding: 12,
-                        cornerRadius: 8
-                    }
-                },
-                scales: {
-                    y: {
-                        stacked: true,
-                        beginAtZero: true,
-                        grid: { color: 'rgba(255,255,255,0.05)', drawBorder: false }
-                    },
-                    x: {
-                        stacked: true,
-                        grid: { display: false, drawBorder: false }
-                    }
-                }
-            }
-        });
-    </script>
-    <script src="../assets/sidebar.js"></script>
+    
+<script src="../assets/sidebar.js"></script>
 </body>
 </html>

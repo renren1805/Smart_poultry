@@ -9,361 +9,458 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $email = trim($_POST['email']);
     $password = $_POST['password'];
 
-    $stmt = $connection->prepare("
-        SELECT id, fullname, username, email, password
-        FROM admins
-        WHERE email = ?
-        LIMIT 1
-    ");
+    if (empty($email) || empty($password)) {
+        $error = "All fields are required!";
+    } else {
 
-    $stmt->bind_param("s", $email);
-    $stmt->execute();
+        $stmt = $connection->prepare("SELECT id, fullname, email, password, status FROM customers WHERE email = ? LIMIT 1");
+        $stmt->bind_param("s", $email);
+        $stmt->execute();
+        $result = $stmt->get_result();
 
-    $result = $stmt->get_result();
+        if ($result->num_rows == 1) {
 
-    if ($result->num_rows === 1) {
+            $user = $result->fetch_assoc();
 
-        $admin = $result->fetch_assoc();
+            if (password_verify($password, $user['password'])) {
 
-        // Verify password securely
-        if (password_verify($password, $admin['password'])) {
+                if ($user['status'] != "active") {
+                    $error = "Account is not active.";
+                } else {
 
-            session_regenerate_id(true);
+                    $_SESSION['user_id'] = $user['id'];
+                    $_SESSION['fullname'] = $user['fullname'];
+                    $_SESSION['email'] = $user['email'];
+                    
+                    header("Location: dashboard.php");
+                    exit();
+                }
 
-            $_SESSION['admin_id'] = $admin['id'];
-            $_SESSION['fullname'] = $admin['fullname'];
-            $_SESSION['username'] = $admin['username'];
-            $_SESSION['admin_email'] = $admin['email'];
-
-            header("Location: dashboard.php");
-            exit();
+            } else {
+                $error = "Incorrect password!";
+            }
 
         } else {
-            $error = "Invalid password.";
+            $error = "No account found with that email!";
         }
-
-    } else {
-        $error = "Admin not found.";
     }
-
-    $stmt->close();
 }
 ?>
 
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Login</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login</title>
 
-    <!-- Google Font -->
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
 
-    <!-- Material Symbols -->
-    <link rel="stylesheet"
-    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" />
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap');
 
-    <style>
-        *{
-            margin:0;
-            padding:0;
-            box-sizing:border-box;
-            font-family:'Outfit', sans-serif;
-        }
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    font-family:'Outfit',sans-serif;
+}
 
-        body{
-            min-height:100vh;
-            display:flex;
-            justify-content:center;
-            align-items:center;
-            background:
-            radial-gradient(circle at top left, rgba(59,130,246,.25), transparent 35%),
-            radial-gradient(circle at bottom right, rgba(59,130,246,.15), transparent 25%),
-            linear-gradient(135deg,#090e1a,#0f172a);
-            overflow:hidden;
-            padding:20px;
-        }
+body{
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    align-items:center;
+    overflow:hidden;
+    background:
+    radial-gradient(circle at top left, rgba(245, 158, 11,0.15), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(120,0,0,0.25), transparent 30%),
+    linear-gradient(135deg,#0f172a,#090e1a,#000);
+    color:white;
+    padding:20px;
+}
 
-        /* Glow effect */
-        body::before{
-            content:'';
-            position:absolute;
-            width:450px;
-            height:450px;
-            background:#3b82f6;
-            border-radius:50%;
-            filter:blur(180px);
-            opacity:.18;
-            top:-120px;
-            left:-120px;
-            animation:floatGlow 8s ease-in-out infinite;
-        }
+/* Floating glow animation */
+body::before{
+    content:'';
+    position:absolute;
+    width:350px;
+    height:350px;
+    background:rgba(245, 158, 11,0.12);
+    border-radius:50%;
+    top:-100px;
+    left:-100px;
+    filter:blur(80px);
+    animation: floatGlow 8s ease-in-out infinite;
+}
 
-        body::after{
-            content:'';
-            position:absolute;
-            width:350px;
-            height:350px;
-            background:#60a5fa;
-            border-radius:50%;
-            filter:blur(160px);
-            opacity:.12;
-            bottom:-100px;
-            right:-100px;
-            animation:floatGlow 10s ease-in-out infinite alternate;
-        }
+body::after{
+    content:'';
+    position:absolute;
+    width:350px;
+    height:350px;
+    background:rgba(245, 158, 11,0.08);
+    border-radius:50%;
+    bottom:-120px;
+    right:-100px;
+    filter:blur(100px);
+    animation: floatGlow2 10s ease-in-out infinite;
+}
 
-        @keyframes floatGlow{
-            0%{
-                transform:translateY(0px);
-            }
-            50%{
-                transform:translateY(25px);
-            }
-            100%{
-                transform:translateY(0px);
-            }
-        }
+@keyframes floatGlow{
+    0%,100%{
+        transform:translate(0,0);
+    }
+    50%{
+        transform:translate(40px,30px);
+    }
+}
 
-        form{
-            width:100%;
-            max-width:420px;
-            background:rgba(255,255,255,0.08);
-            backdrop-filter:blur(25px);
-            -webkit-backdrop-filter:blur(25px);
-            border:1px solid rgba(255,255,255,0.1);
-            border-radius:28px;
-            padding:40px;
-            box-shadow:
-            0 10px 40px rgba(0,0,0,.6),
-            inset 0 0 20px rgba(255,255,255,.03);
-            animation:fadeUp .8s ease;
-            position:relative;
-            z-index:10;
-        }
+@keyframes floatGlow2{
+    0%,100%{
+        transform:translate(0,0);
+    }
+    50%{
+        transform:translate(-40px,-30px);
+    }
+}
 
-        @keyframes fadeUp{
-            from{
-                opacity:0;
-                transform:translateY(30px);
-            }
-            to{
-                opacity:1;
-                transform:translateY(0);
-            }
-        }
+/* Container */
+.login-container{
+    width:100%;
+    display:flex;
+    justify-content:center;
+    z-index:2;
+}
 
-        h2{
-            color:#fff;
-            font-size:30px;
-            font-weight:700;
-            text-align:center;
-            margin-bottom:30px;
-            letter-spacing:.5px;
-            text-shadow:0 0 20px rgba(59,130,246,.3);
-        }
+/* Glassmorphism Card */
+.login-card{
+    position:relative;
+    width:100%;
+    max-width:430px;
+    padding:40px;
+    border-radius:30px;
+    background:rgba(255,255,255,0.05);
+    border:1px solid rgba(255,255,255,0.08);
+    backdrop-filter:blur(25px);
+    -webkit-backdrop-filter:blur(25px);
+    box-shadow:
+        0 8px 32px rgba(0,0,0,0.5),
+        0 0 30px rgba(245, 158, 11,0.15);
+    overflow:hidden;
+    animation: fadeUp .8s ease;
+}
 
-        .input-group{
-            position:relative;
-            margin-bottom:18px;
-        }
+.login-card::before{
+    content:'';
+    position:absolute;
+    inset:0;
+    border-radius:30px;
+    padding:1px;
+    background:linear-gradient(
+        135deg,
+        rgba(245, 158, 11,0.5),
+        transparent,
+        rgba(255,80,80,0.3)
+    );
+    -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite:xor;
+    pointer-events:none;
+}
 
-        input{
-            width:100%;
-            padding:15px 60px;
-            background:rgba(255,255,255,0.08);
-            border:1px solid rgba(255,255,255,.12);
-            border-radius:20px;
-            color:#fff;
-            font-size:15px;
-            outline:none;
-            transition:.35s ease;
-        }
+@keyframes fadeUp{
+    from{
+        opacity:0;
+        transform:translateY(40px) scale(.96);
+    }
+    to{
+        opacity:1;
+        transform:translateY(0) scale(1);
+    }
+}
 
-        input::placeholder{
-            color:#9aa8c7;
-        }
+/* Header */
+.login-header{
+    text-align:center;
+    margin-bottom:30px;
+}
 
-        input:focus{
-            border-color:#3b82f6;
-            box-shadow:
-            0 0 0 4px rgba(59,130,246,.15),
-            0 0 25px rgba(59,130,246,.25);
-            transform:translateY(-2px);
-        }
+.logo{
+    width:80px;
+    height:80px;
+    margin:auto;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border-radius:50%;
+    background:rgba(245, 158, 11,0.08);
+    border:1px solid rgba(245, 158, 11,0.2);
+    box-shadow:0 0 30px rgba(245, 158, 11,.25);
+    animation:pulse 2.5s infinite;
+}
 
-        .input-icon{
-            position:absolute;
-            left:15px;
-            top:50%;
-            transform:translateY(-50%);
-            color:#6ca8ff;
-            font-size:22px;
-        }
+.logo .material-icons{
+    font-size:40px;
+    color:#f59e0b;
+}
 
-        .password-group{
-           margin-bottom:22px;
-        }
+@keyframes pulse{
+    0%,100%{
+        transform:scale(1);
+    }
+    50%{
+        transform:scale(1.08);
+    }
+}
 
-        .password-toggle{
-            position:absolute;
-            right:18px;
-            top:50%;
-            transform:translateY(-50%);
-            color:#7caeff;
-            cursor:pointer;
-            font-size:22px;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            transition:all .3s ease;
-            user-select:none;
-        }
+.login-header h2{
+    margin-top:20px;
+    font-size:28px;
+    font-weight:600;
+}
 
-        .password-toggle:hover{
-            color:#ffffff;
-            transform:translateY(-50%) scale(1.08);
-        }
+.login-header p{
+    font-size:14px;
+    color:#bfbfbf;
+}
 
-        .forgot-password-link{
-            text-align:right;
-            margin-top:8px;
-            font-size:13px;
-        }
+/* Form */
+.form-group{
+    margin-bottom:20px;
+}
 
-        .forgot-password-link a{
-            color:#9aa8c7;
-            font-weight:500;
-        }
+label{
+    display:block;
+    margin-bottom:8px;
+    font-size:14px;
+    color:#ddd;
+}
 
-        .forgot-password-link a:hover{
-            color:#60a5fa;
-            text-shadow:0 0 10px rgba(96,165,250,.4);
-        }
+/* Input */
+.input-wrapper{
+    position:relative;
+}
 
-        button{
-            width:100%;
-            border:none;
-            padding:16px;
-            border-radius:18px;
-            background:linear-gradient(135deg,#3b82f6,#3b82f6);
-            color:#fff;
-            font-size:16px;
-            font-weight:600;
-            cursor:pointer;
-            transition:.35s ease;
-            box-shadow:0 8px 25px rgba(59,130,246,.35);
-        }
+.input-wrapper .material-icons{
+    position:absolute;
+    left:15px;
+    top:50%;
+    transform:translateY(-50%);
+    color:#f59e0b;
+    transition:.3s;
+    font-size:22px;
+}
 
-        button:hover{
-            transform:translateY(-3px);
-            box-shadow:0 12px 35px rgba(59,130,246,.45);
-        }
+input{
+    width:100%;
+    height:55px;
+    border:none;
+    outline:none;
+    border-radius:16px;
+    background:rgba(255,255,255,0.06);
+    border:1px solid rgba(255,255,255,0.08);
+    color:white;
+    padding:0 50px;
+    font-size:15px;
+    transition:.35s ease;
+    backdrop-filter:blur(10px);
+}
 
-        button:active{
-            transform:scale(.98);
-        }
+input::placeholder{
+    color:#888;
+}
 
-        p{
-            margin-top:18px;
-            text-align:center;
-            color:#cbd5e1;
-            font-size:14px;
-        }
+input:focus{
+    border-color:#f59e0b;
+    box-shadow:
+        0 0 0 4px rgba(245, 158, 11,0.12),
+        0 0 18px rgba(245, 158, 11,0.25);
+    transform:translateY(-2px);
+}
 
-        a{
-            color:#60a5fa;
-            text-decoration:none;
-            font-weight:600;
-            transition:.3s;
-        }
+input:focus + .material-icons{
+    color:#f59e0b;
+}
 
-        a:hover{
-            color:#93c5fd;
-        }
+/* Show Password Icon */
+.toggle-password{
+    position:absolute;
+    right:15px;
+    top:50%;
+    transform:translateY(-50%);
+    cursor:pointer;
+    color:#aaa;
+    transition:.3s;
+}
 
-        .error-message{
-            background:rgba(255,0,0,.12);
-            border:1px solid rgba(255,0,0,.25);
-            color:#ff9b9b;
-            padding:14px;
-            border-radius:14px;
-            margin-bottom:20px;
-            text-align:center;
-        }
+.toggle-password:hover{
+    color:#f59e0b;
+}
 
-        @media(max-width:480px){
-            form{
-                padding:30px 25px;
-            }
+/* Button */
+.btn-login{
+    width:100%;
+    height:55px;
+    border:none;
+    border-radius:16px;
+    cursor:pointer;
+    color:white;
+    font-size:15px;
+    font-weight:600;
+    background:linear-gradient(
+        135deg,
+        #f59e0b,
+        #d97706
+    );
+    transition:.35s ease;
+    box-shadow:
+        0 8px 20px rgba(245, 158, 11,0.25);
+}
 
-            h2{
-                font-size:28px;
-            }
-        }
-    </style>
+.btn-login:hover{
+    transform:translateY(-3px);
+    box-shadow:
+        0 10px 25px rgba(245, 158, 11,.4),
+        0 0 20px rgba(245, 158, 11,.25);
+}
+
+.btn-login:active{
+    transform:scale(.98);
+}
+
+/* Error */
+.error-message{
+    background:rgba(245, 158, 11,0.1);
+    border:1px solid rgba(245, 158, 11,0.2);
+    color:#ff8f8f;
+    padding:14px;
+    border-radius:14px;
+    margin-bottom:20px;
+    text-align:center;
+    animation:shake .3s ease;
+}
+
+@keyframes shake{
+    0%,100%{transform:translateX(0);}
+    25%{transform:translateX(-5px);}
+    50%{transform:translateX(5px);}
+    75%{transform:translateX(-3px);}
+}
+
+/* Register Link */
+.register-link{
+    margin-top:22px;
+    text-align:center;
+    color:#ccc;
+    font-size:14px;
+}
+
+.register-link a{
+    color:#f59e0b;
+    text-decoration:none;
+    font-weight:600;
+    transition:.3s;
+}
+
+.register-link a:hover{
+    color:#f59e0b;
+    text-shadow:0 0 10px rgba(245, 158, 11,.5);
+}
+
+/* Forgot Password Link */
+.forgot-password-link{
+    text-align:right;
+    margin-top:8px;
+    font-size:13px;
+}
+
+.forgot-password-link a{
+    color:#bfbfbf;
+    text-decoration:none;
+    transition:.3s ease;
+}
+
+.forgot-password-link a:hover{
+    color:#f59e0b;
+    text-shadow:0 0 10px rgba(245, 158, 11,.5);
+}
+
+/* Responsive */
+@media(max-width:480px){
+    .login-card{
+        padding:25px;
+        border-radius:24px;
+    }
+
+    .login-header h2{
+        font-size:24px;
+    }
+}
+</style>
 <link rel="stylesheet" href="../assets/responsive.css">
 </head>
+
 <body>
 
-<form method="POST">
+<div class="login-container">
+    <div class="login-card">
 
-    <h2>Admin Login</h2>
-
-    <?php if($error): ?>
-        <div class="error-message">
-            <?= htmlspecialchars($error) ?>
+        <div class="login-header">
+            <div class="logo">
+                <span class="material-icons">login</span>
+            </div>
+            <h2>Welcome Back</h2>
+            <p>Sign in to your account</p>
         </div>
-    <?php endif; ?>
 
-<div class="input-group">
-    <span class="material-symbols-outlined input-icon">
-        mail
-    </span>
+        <?php if ($error): ?>
+            <div class="error-message">
+                <?= htmlspecialchars($error) ?>
+            </div>
+        <?php endif; ?>
 
-    <input type="email"
-           name="email"
-           placeholder="Email"
-           required>
-</div>
-<div class="input-group password-group">
-    <span class="material-symbols-outlined input-icon">
-        lock
-    </span>
+        <!-- FIXED: form submits to SAME file -->
+        <form method="POST">
 
-    <input type="password"
-           name="password"
-           id="password"
-           placeholder="Password"
-           required>
+            <div class="form-group">
+                <label>Email</label>
+                <div class="input-wrapper">
+                    <span class="material-icons">email</span>
+                    <input type="email" name="email" placeholder="Email" required>
+                </div>
+            </div>
 
-    <span class="material-symbols-outlined password-toggle"
-          id="toggleIcon"
-          onclick="togglePassword()">
-        visibility
-    </span>
+            <div class="form-group">
+                <label>Password</label>
+                <div class="input-wrapper">
+                    <span class="material-icons">lock</span>
+                    <input type="password" name="password" id="password" placeholder="Password" required>
+                    <span class="material-icons toggle-password" onclick="togglePassword()">
+                        visibility
+                    </span>
+                </div>
+                <div class="forgot-password-link">
+                    <a href="forgot_password.php">Forgot Password?</a>
+                </div>
+            </div>
+            <button class="btn-login">
+                <span class="material-icons" style="vertical-align:middle;">login</span>
+                Sign In
+            </button>
+        </form>
 
-    <div class="forgot-password-link">
-        <a href="forgot_password.php">Forgot Password?</a>
+        <div class="register-link">
+            Don't have an account? <a href="register.php">Register</a>
+        </div>
+
     </div>
 </div>
-
-    <button type="submit">
-        Login
-    </button>
-    <p>
-        Don't have an account?
-        <a href="register.php">
-            Register here
-        </a>
-    </p>
-
-</form>
-
 <script>
 function togglePassword() {
     const password = document.getElementById("password");
-    const icon = document.getElementById("toggleIcon");
+    const icon = document.querySelector(".toggle-password");
 
     if (password.type === "password") {
         password.type = "text";
@@ -374,5 +471,21 @@ function togglePassword() {
     }
 }
 </script>
+
+    <style>
+    .toggle-password{
+        position:absolute !important;
+        right:15px;
+        left:auto !important;
+        cursor:pointer;
+        color:#f59e0b;
+        transition:.3s;
+    }
+
+    .toggle-password:hover{
+        color:#f59e0b;
+        transform:translateY(-50%) scale(1.1);
+    }
+</style>
 </body>
 </html>

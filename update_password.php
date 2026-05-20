@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 require('../connection.php');
 
 if (isset($_POST['update'])) {
@@ -6,7 +6,7 @@ if (isset($_POST['update'])) {
     $id = $_POST['id'];
     $product = $_POST['Product'];
 
-    $get = mysqli_query($connection, "SELECT * FROM admins WHERE UserID='$id'");
+    $get = mysqli_query($connection, "SELECT * FROM customers WHERE CustomerID='$id'");
     $data = mysqli_fetch_assoc($get);
 
     $oldPicture = $data['Picture'];
@@ -26,14 +26,14 @@ if (isset($_POST['update'])) {
             unlink($oldpath);
         }
 
-        $squery = "UPDATE admins
+        $squery = "UPDATE customers
                    SET Product='$product', Picture='$newPicture' 
-                   WHERE UserID='$id'";
+                   WHERE User ID='$id'";
     } else {
 
-        $squery = "UPDATE admins 
+        $squery = "UPDATE customers 
                    SET Product='$product' 
-                   WHERE UserID='$id'";
+                   WHERE User ID='$id'";
     }
 
 mysqli_query($connection, $squery);
